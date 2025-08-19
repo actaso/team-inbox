@@ -63,9 +63,11 @@ import {
   removePerson
 } from "@/utils/firestore";
 import { initializeCurrentUser } from "@/utils/team-initialization";
+import ProjectSelector, { useProjectId } from "./ProjectSelector";
 
 export default function TeamInbox() {
   const { user } = useUser();
+  const projectId = useProjectId();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [people, setPeople] = useState<string[]>([]);
 
@@ -104,20 +106,20 @@ export default function TeamInbox() {
     if (typeof parsedPrefs.search === "string") setSearch(parsedPrefs.search);
     if (typeof parsedPrefs.assigneeFilter === "string") setAssigneeFilter(parsedPrefs.assigneeFilter);
 
-    // Initialize current user as a team member
+    // Initialize current user as a team member for this project
     if (user) {
-      initializeCurrentUser(user);
+      initializeCurrentUser(user, projectId);
     }
 
-    // Subscribe to Firestore data (shared across all users)
-    const unsubscribeTasks = subscribeToTasks(setTasks);
+    // Subscribe to Firestore data (scoped by project)
+    const unsubscribeTasks = subscribeToTasks(projectId, setTasks);
     const unsubscribePeople = subscribeToPeople(setPeople);
 
     return () => {
       unsubscribeTasks();
       unsubscribePeople();
     };
-  }, [user]);
+  }, [user, projectId]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -199,7 +201,7 @@ export default function TeamInbox() {
     };
 
     try {
-      await addTaskToFirestore(taskData, user.id);
+      await addTaskToFirestore(taskData, user.id, projectId);
       setDraft({ title: "", notes: "", impact: 3, confidence: 3, ease: 3, assignee: undefined, done: false });
       setNewOpen(false);
     } catch (error) {
@@ -240,7 +242,7 @@ export default function TeamInbox() {
       try {
         // Import tasks
         for (const task of data.tasks) {
-          await addTaskToFirestore(task, user.id);
+          await addTaskToFirestore(task, user.id, projectId);
         }
         
         // Import people
@@ -253,7 +255,7 @@ export default function TeamInbox() {
         console.error('Error importing data:', error);
       }
     }
-  }, [user?.id, people]);
+  }, [user?.id, people, projectId]);
 
   const handleExport = useCallback(() => {
     exportToJson(tasks, people);
@@ -427,6 +429,7 @@ export default function TeamInbox() {
             <span className="text-xs bg-muted px-2 py-1 rounded font-medium">
               Week {Math.ceil((new Date().getTime() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000))}
             </span>
+            <ProjectSelector />
           </div>
         </div>
         <div className="flex items-center gap-2">

@@ -15,5 +15,10 @@ service cloud.firestore {
     match /people/{personId} {
       allow read, write: if isSignedIn();
     }
+
+    // Projects: allow read/write for authenticated users
+    match /projects/{projectId} {
+      allow read, write: if isSignedIn();
+    }
   }
 }

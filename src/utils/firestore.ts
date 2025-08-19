@@ -5,6 +5,8 @@ import {
   addDoc, 
   updateDoc, 
   deleteDoc, 
+  setDoc,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
@@ -19,6 +21,8 @@ import { Task, Score } from '@/types/task';
 
 const TASKS_COLLECTION = 'tasks';
 const PEOPLE_COLLECTION = 'people';
+const PROJECTS_COLLECTION = 'projects';
+const PROJECT_FIELD = 'projectId';
 
 export interface FirestoreTask {
   id?: string;
@@ -56,7 +60,7 @@ export const firestoreTaskToTask = (doc: QueryDocumentSnapshot<DocumentData>): T
 };
 
 // Convert Task to Firestore format
-export const taskToFirestoreTask = (task: Task, userId: string): Record<string, unknown> => {
+export const taskToFirestoreTask = (task: Task, userId: string, projectId: string): Record<string, unknown> => {
   const firestoreTask: Record<string, unknown> = {
     title: task.title,
     notes: task.notes || '',
@@ -66,6 +70,7 @@ export const taskToFirestoreTask = (task: Task, userId: string): Record<string, 
     done: task.done,
     createdAt: Timestamp.fromMillis(task.createdAt),
     userId,
+    [PROJECT_FIELD]: projectId,
   };
   
   // Only include assignee if it's not undefined
@@ -77,17 +82,17 @@ export const taskToFirestoreTask = (task: Task, userId: string): Record<string, 
 };
 
 // Tasks operations
-export const getTasks = async (): Promise<Task[]> => {
-  const q = query(
-    collection(db, TASKS_COLLECTION),
-    orderBy('createdAt', 'desc')
-  );
+export const getTasks = async (projectId: string): Promise<Task[]> => {
+  const base = collection(db, TASKS_COLLECTION);
+  const q = projectId === 'all'
+    ? query(base, orderBy('createdAt', 'desc'))
+    : query(base, where(PROJECT_FIELD, '==', projectId), orderBy('createdAt', 'desc'));
   const snapshot = await getDocs(q);
   return snapshot.docs.map(firestoreTaskToTask);
 };
 
-export const addTask = async (task: Omit<Task, 'id'>, userId: string): Promise<string> => {
-  const firestoreTask = taskToFirestoreTask({ ...task, id: '' }, userId);
+export const addTask = async (task: Omit<Task, 'id'>, userId: string, projectId: string): Promise<string> => {
+  const firestoreTask = taskToFirestoreTask({ ...task, id: '' }, userId, projectId);
   const docRef = await addDoc(collection(db, TASKS_COLLECTION), firestoreTask);
   return docRef.id;
 };
@@ -122,12 +127,13 @@ export const deleteTask = async (taskId: string): Promise<void> => {
 };
 
 export const subscribeToTasks = (
+  projectId: string,
   callback: (tasks: Task[]) => void
 ): Unsubscribe => {
-  const q = query(
-    collection(db, TASKS_COLLECTION),
-    orderBy('createdAt', 'desc')
-  );
+  const base = collection(db, TASKS_COLLECTION);
+  const q = projectId === 'all'
+    ? query(base, orderBy('createdAt', 'desc'))
+    : query(base, where(PROJECT_FIELD, '==', projectId), orderBy('createdAt', 'desc'));
   
   return onSnapshot(q, 
     (snapshot) => {
@@ -198,4 +204,30 @@ export const subscribeToPeople = (
       console.error('Error in people subscription:', error);
     }
   );
+};
+
+// Projects operations
+export interface Project { id: string; name: string }
+
+export const subscribeToProjects = (
+  callback: (projects: Project[]) => void
+): Unsubscribe => {
+  const q = query(collection(db, PROJECTS_COLLECTION), orderBy('createdAt', 'asc'));
+  return onSnapshot(q, (snapshot) => {
+    const projects = snapshot.docs.map(d => ({ id: d.id, name: (d.data() as any).name as string }));
+    callback(projects);
+  });
+};
+
+export const addProject = async (name: string): Promise<string> => {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error('Project name required');
+  // use name as id (slug)
+  const id = trimmed.toLowerCase().replace(/\s+/g, '-');
+  const docRef = doc(collection(db, PROJECTS_COLLECTION), id);
+  const exists = await getDoc(docRef);
+  if (!exists.exists()) {
+    await setDoc(docRef, { name: trimmed, createdAt: Timestamp.now() });
+  }
+  return id;
 };
