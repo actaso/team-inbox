@@ -40,7 +40,7 @@ export const importFromJson = async (): Promise<ExportData | null> => {
           alert("Invalid JSON file format");
           resolve(null);
         }
-      } catch (e) {
+      } catch {
         alert("Invalid JSON file");
         resolve(null);
       }
