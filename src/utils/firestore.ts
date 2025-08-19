@@ -214,7 +214,10 @@ export const subscribeToProjects = (
 ): Unsubscribe => {
   const q = query(collection(db, PROJECTS_COLLECTION), orderBy('createdAt', 'asc'));
   return onSnapshot(q, (snapshot) => {
-    const projects = snapshot.docs.map(d => ({ id: d.id, name: (d.data() as any).name as string }));
+    const projects = snapshot.docs.map((d) => {
+      const data = d.data() as { name?: string };
+      return { id: d.id, name: data.name ?? d.id } as Project;
+    });
     callback(projects);
   });
 };
