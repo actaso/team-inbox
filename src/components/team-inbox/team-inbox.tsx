@@ -313,7 +313,12 @@ export default function TeamInbox() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Team Inbox</h1>
-          <p className="text-sm text-muted-foreground">One central list. ICE-ranked.</p>
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-muted-foreground">One central list. ICE-ranked.</p>
+            <span className="text-xs bg-muted px-2 py-1 rounded font-medium">
+              Week {Math.ceil((new Date().getTime() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000))}
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2 mr-2">
@@ -476,7 +481,7 @@ export default function TeamInbox() {
                       onClick={() => setActiveId(t.id)}
                       className="text-left w-full"
                     >
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2">
                         <div className="font-medium leading-5 hover:underline cursor-pointer flex-1">{t.title}</div>
                         {t.assignee ? (
                           <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border-blue-200">
@@ -488,7 +493,6 @@ export default function TeamInbox() {
                           </Badge>
                         )}
                       </div>
-                      {t.notes && <div className="text-xs text-muted-foreground line-clamp-2">{t.notes}</div>}
                     </button>
                   </TableCell>
                   <TableCell>
