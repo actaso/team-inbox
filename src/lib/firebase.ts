@@ -1,5 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app';
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getStorage, connectStorageEmulator } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -11,19 +13,39 @@ const firebaseConfig = {
 };
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-export const db = getFirestore(app);
 
-// Connect to Firestore emulator in development
-if (process.env.NODE_ENV === 'development') {
-  const isFirestoreConnected = (db as unknown as { _delegate?: { _databaseId?: { projectId?: string } } })._delegate?._databaseId?.projectId?.includes('demo-');
-  
-  if (!isFirestoreConnected) {
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const storage = getStorage(app);
+
+// Connect to emulators in development (browser only)
+let emulatorsConnected = false;
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  if (!emulatorsConnected) {
+    console.log('🔥 Firebase Client SDK: Connecting to emulators...');
+
+    try {
+      connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
+      console.log('   ✅ Auth emulator connected: http://localhost:9099');
+    } catch {
+      console.log('   ⚠️ Auth emulator connection skipped (likely already connected)');
+    }
+
     try {
       connectFirestoreEmulator(db, 'localhost', 8080);
-      console.log('🔥 Connected to Firestore emulator');
-    } catch (error) {
-      console.log('Firestore emulator connection failed - make sure emulators are running:', error);
+      console.log('   ✅ Firestore emulator connected: localhost:8080');
+    } catch {
+      console.log('   ⚠️ Firestore emulator connection skipped (likely already connected)');
     }
+
+    try {
+      connectStorageEmulator(storage, 'localhost', 9199);
+      console.log('   ✅ Storage emulator connected: localhost:9199');
+    } catch {
+      console.log('   ⚠️ Storage emulator connection skipped (likely already connected)');
+    }
+
+    emulatorsConnected = true;
   }
 }
 

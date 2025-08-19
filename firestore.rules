@@ -2,14 +2,18 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow all operations on tasks (using Clerk for auth, loose Firestore rules for development)
-    match /tasks/{document} {
-      allow read, write: if true;
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.clerk_user_id == request.auth.uid;
     }
-    
-    // Allow all operations on people (using Clerk for auth, loose Firestore rules for development)
-    match /people/{document} {
-      allow read, write: if true;
+
+    // Tasks: allow read/write for authenticated users
+    match /tasks/{taskId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // People: allow read/write for authenticated users
+    match /people/{personId} {
+      allow read, write: if isSignedIn();
     }
   }
 }

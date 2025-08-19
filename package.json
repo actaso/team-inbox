@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -11,9 +11,8 @@
     "env:pull:dev": "vercel env pull --environment=development",
     "env:pull:preview": "vercel env pull --environment=preview",
     "env:pull:production": "vercel env pull --environment=production",
-    "firebase:emulators": "firebase emulators:start",
-    "firebase:emulators:bg": "firebase emulators:start &",
-    "dev:full": "concurrently \"npm run firebase:emulators\" \"npm run dev\""
+    "dev:emulators": "firebase emulators:start --only auth,firestore,storage,ui",
+    "dev:full": "concurrently \"npm run dev:emulators\" \"npm run dev\""
   },
   "dependencies": {
     "@clerk/nextjs": "^6.31.2",
@@ -26,6 +25,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "firebase": "^12.1.0",
+    "firebase-admin": "12.7.0",
     "lucide-react": "^0.540.0",
     "next": "15.4.7",
     "react": "19.1.0",

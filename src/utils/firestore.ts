@@ -49,7 +49,7 @@ export const firestoreTaskToTask = (doc: QueryDocumentSnapshot<DocumentData>): T
     impact: data.impact,
     confidence: data.confidence,
     ease: data.ease,
-    assignee: data.assignee || undefined, // Handle missing assignee
+    assignee: data.assignee || undefined, // Handle missing/null assignee
     done: data.done,
     createdAt: data.createdAt.toMillis(),
   };
@@ -96,9 +96,16 @@ export const updateTask = async (taskId: string, updates: Partial<Task>): Promis
   const docRef = doc(db, TASKS_COLLECTION, taskId);
   const firestoreUpdates: Record<string, unknown> = {};
   
-  // Only include defined values
+  // Process updates
   Object.entries(updates).forEach(([key, value]) => {
-    if (value !== undefined) {
+    if (key === 'assignee') {
+      // Special handling for assignee: undefined should delete the field
+      if (value === undefined || value === null) {
+        firestoreUpdates[key] = null; // Use null to delete field in Firestore
+      } else {
+        firestoreUpdates[key] = value;
+      }
+    } else if (value !== undefined) {
       if (key === 'createdAt' && typeof value === 'number') {
         firestoreUpdates[key] = Timestamp.fromMillis(value);
       } else {
