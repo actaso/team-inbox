@@ -208,13 +208,13 @@ export default function TeamInbox() {
     }
   };
 
-  const updateTask = async (id: string, patch: Partial<Task>) => {
+  const updateTask = useCallback(async (id: string, patch: Partial<Task>) => {
     try {
       await updateTaskInFirestore(id, patch);
     } catch (error) {
       console.error('Error updating task:', error);
     }
-  };
+  }, []);
 
   const deleteTask = async (id: string) => {
     try {
