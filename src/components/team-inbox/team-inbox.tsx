@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import RichTextNotes from "@/components/RichTextNotes";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
@@ -77,6 +78,8 @@ export default function TeamInbox() {
   const [newOpen, setNewOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Task | null>(null);
 
   const activeTask = useMemo(() => tasks.find((t) => t.id === activeId) || null, [activeId, tasks]);
 
@@ -136,6 +139,54 @@ export default function TeamInbox() {
   }, [tasks, search, assigneeFilter, showDone]);
 
   const ordered = useMemo(() => sortTasks(filtered), [filtered]);
+
+  // Keep selection in sync with data when modal is closed
+  useEffect(() => {
+    if (activeId) return; // when modal open, ignore selection sync
+    if (!ordered.length) {
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !ordered.some(t => t.id === selectedId)) {
+      setSelectedId(ordered[0].id);
+    }
+  }, [ordered, activeId, selectedId]);
+
+  // Initialize edit draft when opening a task
+  useEffect(() => {
+    const next = tasks.find(t => t.id === activeId) || null;
+    setEditDraft(next ? { ...next } : null);
+  }, [activeId, tasks]);
+
+  const saveAndClose = useCallback(async () => {
+    if (!activeId || !editDraft) {
+      setActiveId(null);
+      return;
+    }
+    const original = tasks.find(t => t.id === activeId);
+    if (!original) {
+      setActiveId(null);
+      return;
+    }
+    const patch: Partial<Task> = {};
+    if (editDraft.title !== original.title) patch.title = editDraft.title;
+    if ((editDraft.notes || "") !== (original.notes || "")) patch.notes = editDraft.notes;
+    if (editDraft.impact !== original.impact) patch.impact = editDraft.impact;
+    if (editDraft.confidence !== original.confidence) patch.confidence = editDraft.confidence;
+    if (editDraft.ease !== original.ease) patch.ease = editDraft.ease;
+    if ((editDraft.assignee || undefined) !== (original.assignee || undefined)) patch.assignee = editDraft.assignee;
+    if (editDraft.done !== original.done) patch.done = editDraft.done;
+
+    try {
+      if (Object.keys(patch).length > 0) {
+        await updateTaskInFirestore(activeId, patch);
+      }
+    } catch (error) {
+      console.error('Error saving edits:', error);
+    } finally {
+      setActiveId(null);
+    }
+  }, [activeId, editDraft, tasks]);
 
   const addTask = async () => {
     if (!draft.title.trim() || !user?.id) return;
@@ -214,12 +265,63 @@ export default function TeamInbox() {
       const k = e.key.toLowerCase();
       const cmd = e.metaKey || e.ctrlKey;
       
-      // Don't trigger shortcuts when typing in inputs
-      const isTyping = ['input', 'textarea'].includes((e.target as HTMLElement)?.tagName?.toLowerCase());
+      // Don't trigger shortcuts when typing in inputs or rich text (contentEditable)
+      const targetEl = e.target as HTMLElement | null;
+      const isTyping = (() => {
+        const isInputLike = (el: HTMLElement | null) => {
+          const t = el?.tagName?.toLowerCase();
+          return t === 'input' || t === 'textarea' || t === 'select';
+        };
+        const hasContentEditableAncestor = (el: HTMLElement | null): boolean => {
+          let node: HTMLElement | null = el;
+          while (node) {
+            if (node.isContentEditable) return true;
+            node = node.parentElement;
+          }
+          return false;
+        };
+        const active = (document.activeElement as HTMLElement | null);
+        return (
+          !!targetEl && (isInputLike(targetEl) || targetEl.isContentEditable || hasContentEditableAncestor(targetEl))
+          || (!!active && (isInputLike(active) || active.isContentEditable))
+        );
+      })();
       if (isTyping && !cmd) return;
 
       // Single key shortcuts (when not typing)
       if (!isTyping) {
+        // Up/Down navigation in list when modal is closed
+        if (!activeTask && (k === 'arrowdown' || k === 'arrowup')) {
+          e.preventDefault();
+          if (!ordered.length) return;
+          const currentIndex = selectedId ? ordered.findIndex(t => t.id === selectedId) : 0;
+          const nextIndex = k === 'arrowdown'
+            ? Math.min(currentIndex + 1, ordered.length - 1)
+            : Math.max(currentIndex - 1, 0);
+          const next = ordered[nextIndex];
+          if (next) setSelectedId(next.id);
+          return;
+        }
+
+        // Enter: open selected task in modal
+        if (!activeTask && k === 'enter') {
+          if (selectedId) {
+            e.preventDefault();
+            setActiveId(selectedId);
+          }
+          return;
+        }
+
+        // Space: toggle done on selected task
+        if (!activeTask && k === ' ') {
+          if (selectedId) {
+            e.preventDefault();
+            const t = ordered.find(t => t.id === selectedId);
+            if (t) updateTask(t.id, { done: !t.done });
+          }
+          return;
+        }
+
         // N: New task
         if (k === "n") {
           e.preventDefault();
@@ -296,7 +398,7 @@ export default function TeamInbox() {
         }
       }
       
-      // Space: Toggle task completion (when task is selected)
+      // Space: Toggle task completion (when task is selected in modal)
       if (k === " " && activeTask && !isTyping) {
         e.preventDefault();
         updateTask(activeTask.id, { done: !activeTask.done });
@@ -332,7 +434,7 @@ export default function TeamInbox() {
             <DialogTrigger asChild>
               <Button className="gap-2"><Plus className="h-4 w-4"/>Add</Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>New item</DialogTitle>
                 <DialogDescription>Add a concise title. Use notes for context. Press ⌘+Enter to save quickly.</DialogDescription>
@@ -349,16 +451,11 @@ export default function TeamInbox() {
                     }
                   }}
                 />
-                <Textarea
-                  placeholder="Notes (optional)"
-                  value={draft.notes}
-                  onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                      e.preventDefault();
-                      addTask();
-                    }
-                  }}
+                <RichTextNotes
+                  value={draft.notes || ""}
+                  onChange={(html) => setDraft((d) => ({ ...d, notes: html }))}
+                  placeholder="Notes (rich text; paste/drag images)"
+                  onCmdEnter={() => addTask()}
                 />
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-1">
@@ -472,7 +569,14 @@ export default function TeamInbox() {
             </TableHeader>
             <TableBody>
               {ordered.map((t) => (
-                <TableRow key={t.id} className={cn(t.done && "opacity-60")}> 
+                <TableRow
+                  key={t.id}
+                  className={cn(
+                    t.done && "opacity-60",
+                    selectedId === t.id && "bg-muted/50"
+                  )}
+                  data-selected={selectedId === t.id}
+                > 
                   <TableCell>
                     <Checkbox checked={t.done} onCheckedChange={(v) => updateTask(t.id, { done: Boolean(v) })} />
                   </TableCell>
@@ -574,7 +678,7 @@ export default function TeamInbox() {
       <footer className="text-xs text-muted-foreground text-center space-y-1">
         <div>Sort: <strong>ICE = Impact × Confidence × Ease</strong></div>
         <div className="text-xs opacity-75">
-          <strong>N</strong> New · <strong>K</strong> Filters · <strong>/</strong> Search · <strong>D</strong> Toggle Done · <strong>E</strong> Export · <strong>R</strong> Clear · <strong>ESC</strong> Close
+          <strong>↑/↓</strong> Navigate · <strong>Enter</strong> Open · <strong>Space</strong> Toggle · <strong>N</strong> New · <strong>K</strong> Filters · <strong>/</strong> Search · <strong>D</strong> Toggle Done · <strong>E</strong> Export · <strong>R</strong> Clear · <strong>ESC</strong> Close
         </div>
         <div className="text-xs opacity-60">
           Task editing: <strong>Shift+1-5</strong> Impact · <strong>Alt+1-5</strong> Confidence · <strong>⌘+1-5</strong> Ease · <strong>Space</strong> Toggle Done · <strong>⌘+Enter</strong> Save/Close
@@ -683,7 +787,7 @@ export default function TeamInbox() {
 
       {/* Task detail dialog */}
       <Dialog open={!!activeTask} onOpenChange={(open) => setActiveId(open ? activeId : null)}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
           {activeTask ? (
             <>
               <DialogHeader>
@@ -702,17 +806,11 @@ export default function TeamInbox() {
                     }
                   }}
                 />
-                <Textarea
-                  placeholder="Notes"
-                  value={activeTask.notes}
-                  onChange={(e) => updateTask(activeTask.id, { notes: e.target.value })}
-                  className="min-h-32"
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                      e.preventDefault();
-                      setActiveId(null);
-                    }
-                  }}
+                <RichTextNotes
+                  value={activeTask.notes || ""}
+                  onChange={(html) => updateTask(activeTask.id, { notes: html })}
+                  placeholder="Notes (rich text; paste/drag images)"
+                  onCmdEnter={() => setActiveId(null)}
                 />
 
                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
