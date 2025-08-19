@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,20 +42,29 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { Download, Filter, MoreHorizontal, Plus, Upload, X } from "lucide-react";
+import { UserButton, useUser } from '@clerk/nextjs';
 
 import { Task, TaskDraft, Score } from "@/types/task";
-import { generateId } from "@/utils/id-generator";
 import { calculateTaskScore, sortTasks } from "@/utils/task-scoring";
 import { 
   loadFromStorage, 
-  saveTasksToStorage, 
-  savePeopleToStorage, 
   savePrefsToStorage,
   UserPreferences 
 } from "@/utils/storage";
 import { exportToJson, importFromJson } from "@/utils/import-export";
+import {
+  subscribeToTasks,
+  subscribeToPeople,
+  addTask as addTaskToFirestore,
+  updateTask as updateTaskInFirestore,
+  deleteTask as deleteTaskFromFirestore,
+  addPerson,
+  removePerson
+} from "@/utils/firestore";
+import { initializeCurrentUser } from "@/utils/team-initialization";
 
 export default function TeamInbox() {
+  const { user } = useUser();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [people, setPeople] = useState<string[]>([]);
 
@@ -81,46 +90,37 @@ export default function TeamInbox() {
     done: false,
   });
 
-  // Keyboard shortcuts (⌘K open filters, ⌘N new)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const k = e.key.toLowerCase();
-      if ((e.metaKey || e.ctrlKey) && k === "k") {
-        e.preventDefault();
-        setFiltersOpen(true);
-      }
-      if ((e.metaKey || e.ctrlKey) && (k === "n")) {
-        e.preventDefault();
-        setNewOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
-  // Load from storage on mount
+  // Load preferences from localStorage and subscribe to Firestore data
   useEffect(() => {
-    const { parsedTasks, parsedPeople, parsedPrefs } = loadFromStorage();
-    setTasks(parsedTasks);
-    setPeople(parsedPeople);
+    if (!user?.id) return;
+
+    // Load user-specific preferences using user ID as key
+    const { parsedPrefs } = loadFromStorage(`user-${user.id}`);
     if (typeof parsedPrefs.showDone === "boolean") setShowDone(parsedPrefs.showDone);
     if (typeof parsedPrefs.search === "string") setSearch(parsedPrefs.search);
     if (typeof parsedPrefs.assigneeFilter === "string") setAssigneeFilter(parsedPrefs.assigneeFilter);
-  }, []);
 
-  // Save to storage when data changes
-  useEffect(() => {
-    saveTasksToStorage(tasks);
-  }, [tasks]);
+    // Initialize current user as a team member
+    if (user) {
+      initializeCurrentUser(user);
+    }
+
+    // Subscribe to Firestore data (shared across all users)
+    const unsubscribeTasks = subscribeToTasks(setTasks);
+    const unsubscribePeople = subscribeToPeople(setPeople);
+
+    return () => {
+      unsubscribeTasks();
+      unsubscribePeople();
+    };
+  }, [user]);
 
   useEffect(() => {
-    savePeopleToStorage(people);
-  }, [people]);
-
-  useEffect(() => {
+    if (!user?.id) return;
     const prefs: UserPreferences = { showDone, search, assigneeFilter };
-    savePrefsToStorage(prefs);
-  }, [showDone, search, assigneeFilter]);
+    savePrefsToStorage(prefs, `user-${user.id}`);
+  }, [showDone, search, assigneeFilter, user?.id]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -137,43 +137,175 @@ export default function TeamInbox() {
 
   const ordered = useMemo(() => sortTasks(filtered), [filtered]);
 
-  const addTask = () => {
-    if (!draft.title.trim()) return;
-    const newTask: Task = {
-      id: generateId(),
-      createdAt: Date.now(),
+  const addTask = async () => {
+    if (!draft.title.trim() || !user?.id) return;
+    
+    const taskData = {
       ...draft,
       title: draft.title.trim(),
       notes: draft.notes?.trim() || "",
+      createdAt: Date.now(),
     };
-    setTasks((prev) => [newTask, ...prev]);
-    setDraft({ title: "", notes: "", impact: 3, confidence: 3, ease: 3, assignee: undefined, done: false });
-    setNewOpen(false);
-  };
 
-  const updateTask = (id: string, patch: Partial<Task>) => {
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-  };
-
-  const deleteTask = (id: string) => {
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-  };
-
-  const clearCompleted = () => {
-    setTasks((prev) => prev.filter((t) => !t.done));
-  };
-
-  const handleImport = async () => {
-    const data = await importFromJson();
-    if (data) {
-      setTasks(data.tasks);
-      setPeople(data.people);
+    try {
+      await addTaskToFirestore(taskData, user.id);
+      setDraft({ title: "", notes: "", impact: 3, confidence: 3, ease: 3, assignee: undefined, done: false });
+      setNewOpen(false);
+    } catch (error) {
+      console.error('Error adding task:', error);
     }
   };
 
-  const handleExport = () => {
-    exportToJson(tasks, people);
+  const updateTask = async (id: string, patch: Partial<Task>) => {
+    try {
+      await updateTaskInFirestore(id, patch);
+    } catch (error) {
+      console.error('Error updating task:', error);
+    }
   };
+
+  const deleteTask = async (id: string) => {
+    try {
+      await deleteTaskFromFirestore(id);
+    } catch (error) {
+      console.error('Error deleting task:', error);
+    }
+  };
+
+  const clearCompleted = useCallback(async () => {
+    const completedTasks = tasks.filter(t => t.done);
+    try {
+      await Promise.all(completedTasks.map(task => deleteTaskFromFirestore(task.id)));
+    } catch (error) {
+      console.error('Error clearing completed tasks:', error);
+    }
+  }, [tasks]);
+
+  const handleImport = useCallback(async () => {
+    if (!user?.id) return;
+    
+    const data = await importFromJson();
+    if (data) {
+      try {
+        // Import tasks
+        for (const task of data.tasks) {
+          await addTaskToFirestore(task, user.id);
+        }
+        
+        // Import people
+        for (const person of data.people) {
+          if (!people.includes(person)) {
+            await addPerson(person);
+          }
+        }
+      } catch (error) {
+        console.error('Error importing data:', error);
+      }
+    }
+  }, [user?.id, people]);
+
+  const handleExport = useCallback(() => {
+    exportToJson(tasks, people);
+  }, [tasks, people]);
+
+  // Comprehensive keyboard shortcuts for fast workflow
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      const cmd = e.metaKey || e.ctrlKey;
+      
+      // Don't trigger shortcuts when typing in inputs
+      const isTyping = ['input', 'textarea'].includes((e.target as HTMLElement)?.tagName?.toLowerCase());
+      if (isTyping && !cmd) return;
+
+      // Single key shortcuts (when not typing)
+      if (!isTyping) {
+        // N: New task
+        if (k === "n") {
+          e.preventDefault();
+          setNewOpen(true);
+        }
+        
+        // K: Open filters
+        if (k === "k") {
+          e.preventDefault();
+          setFiltersOpen(true);
+        }
+        
+        // E: Export
+        if (k === "e") {
+          e.preventDefault();
+          handleExport();
+        }
+        
+        // I: Import
+        if (k === "i") {
+          e.preventDefault();
+          handleImport();
+        }
+        
+        // D: Toggle show done
+        if (k === "d") {
+          e.preventDefault();
+          setShowDone(prev => !prev);
+        }
+        
+        // C: Clear completed tasks
+        if (k === "c") {
+          e.preventDefault();
+          clearCompleted();
+        }
+      }
+      
+      // Escape: Close dialogs
+      if (k === "escape") {
+        e.preventDefault();
+        setNewOpen(false);
+        setFiltersOpen(false);
+        setActiveId(null);
+      }
+      
+      // / (slash): Focus search
+      if (k === "/" && !isTyping) {
+        e.preventDefault();
+        setFiltersOpen(true);
+        // Focus search input after dialog opens
+        setTimeout(() => {
+          const searchInput = document.querySelector<HTMLInputElement>('input[placeholder*="Search"]');
+          searchInput?.focus();
+        }, 100);
+      }
+      
+      // Numbers 1-5: Quick ICE scoring when editing task
+      if (['1','2','3','4','5'].includes(k) && activeTask && !isTyping) {
+        const score = Number(k) as Score;
+        // Shift + number: set impact
+        if (e.shiftKey) {
+          e.preventDefault();
+          updateTask(activeTask.id, { impact: score });
+        }
+        // Alt + number: set confidence  
+        else if (e.altKey) {
+          e.preventDefault();
+          updateTask(activeTask.id, { confidence: score });
+        }
+        // Ctrl + number: set ease
+        else if (cmd) {
+          e.preventDefault();
+          updateTask(activeTask.id, { ease: score });
+        }
+      }
+      
+      // Space: Toggle task completion (when task is selected)
+      if (k === " " && activeTask && !isTyping) {
+        e.preventDefault();
+        updateTask(activeTask.id, { done: !activeTask.done });
+      }
+    };
+    
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeTask, handleExport, handleImport, clearCompleted]);
 
   return (
     <div className="mx-auto max-w-5xl p-6 space-y-6">
@@ -184,6 +316,12 @@ export default function TeamInbox() {
           <p className="text-sm text-muted-foreground">One central list. ICE-ranked.</p>
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 mr-2">
+            <span className="text-sm text-muted-foreground">
+              {user?.firstName || user?.emailAddresses[0]?.emailAddress}
+            </span>
+            <UserButton />
+          </div>
           {/* New item dialog */}
           <Dialog open={newOpen} onOpenChange={setNewOpen}>
             <DialogTrigger asChild>
@@ -192,18 +330,30 @@ export default function TeamInbox() {
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>New item</DialogTitle>
-                <DialogDescription>Add a concise title. Use notes for context.</DialogDescription>
+                <DialogDescription>Add a concise title. Use notes for context. Press ⌘+Enter to save quickly.</DialogDescription>
               </DialogHeader>
               <div className="space-y-3 py-2">
                 <Input
                   placeholder="Title (what needs to happen?)"
                   value={draft.title}
                   onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      addTask();
+                    }
+                  }}
                 />
                 <Textarea
                   placeholder="Notes (optional)"
                   value={draft.notes}
                   onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      addTask();
+                    }
+                  }}
                 />
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-1">
@@ -324,9 +474,20 @@ export default function TeamInbox() {
                   <TableCell>
                     <button
                       onClick={() => setActiveId(t.id)}
-                      className="text-left"
+                      className="text-left w-full"
                     >
-                      <div className="font-medium leading-5 hover:underline cursor-pointer">{t.title}</div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="font-medium leading-5 hover:underline cursor-pointer flex-1">{t.title}</div>
+                        {t.assignee ? (
+                          <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border-blue-200">
+                            {t.assignee}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs px-2 py-0.5 text-muted-foreground border-dashed">
+                            unassigned
+                          </Badge>
+                        )}
+                      </div>
                       {t.notes && <div className="text-xs text-muted-foreground line-clamp-2">{t.notes}</div>}
                     </button>
                   </TableCell>
@@ -406,8 +567,14 @@ export default function TeamInbox() {
         </CardContent>
       </Card>
 
-      <footer className="text-xs text-muted-foreground text-center">
-        Sort: <strong>ICE = Impact × Confidence × Ease</strong>. ⌘K Filters · ⌘N New
+      <footer className="text-xs text-muted-foreground text-center space-y-1">
+        <div>Sort: <strong>ICE = Impact × Confidence × Ease</strong></div>
+        <div className="text-xs opacity-75">
+          <strong>N</strong> New · <strong>K</strong> Filters · <strong>/</strong> Search · <strong>D</strong> Toggle Done · <strong>E</strong> Export · <strong>R</strong> Clear · <strong>ESC</strong> Close
+        </div>
+        <div className="text-xs opacity-60">
+          Task editing: <strong>Shift+1-5</strong> Impact · <strong>Alt+1-5</strong> Confidence · <strong>⌘+1-5</strong> Ease · <strong>Space</strong> Toggle Done · <strong>⌘+Enter</strong> Save/Close
+        </div>
       </footer>
 
       {/* Filters Dialog */}
@@ -457,7 +624,13 @@ export default function TeamInbox() {
                   <Badge key={p} variant="secondary" className="px-2 py-1 text-xs">
                     {p}
                     <button
-                      onClick={() => setPeople((prev) => prev.filter((x) => x !== p))}
+                      onClick={async () => {
+                        try {
+                          await removePerson(p);
+                        } catch (error) {
+                          console.error('Error removing person:', error);
+                        }
+                      }}
                       className="ml-2 text-muted-foreground hover:text-foreground"
                       title="Remove"
                     >
@@ -469,22 +642,32 @@ export default function TeamInbox() {
               <div className="flex gap-2">
                 <Input
                   placeholder="Add member name"
-                  onKeyDown={(e) => {
+                  onKeyDown={async (e) => {
                     const v = (e.target as HTMLInputElement).value.trim();
                     if (e.key === "Enter" && v) {
-                      setPeople((prev) => (prev.includes(v) ? prev : [...prev, v]));
-                      (e.target as HTMLInputElement).value = "";
+                      if (!people.includes(v)) {
+                        try {
+                          await addPerson(v);
+                          (e.target as HTMLInputElement).value = "";
+                        } catch (error) {
+                          console.error('Error adding person:', error);
+                        }
+                      }
                     }
                   }}
                 />
                 <Button
                   variant="secondary"
-                  onClick={() => {
+                  onClick={async () => {
                     const el = document.querySelector<HTMLInputElement>("input[placeholder='Add member name']");
                     const v = el?.value.trim();
-                    if (v) {
-                      setPeople((prev) => (prev.includes(v) ? prev : [...prev, v]));
-                      if (el) el.value = "";
+                    if (v && !people.includes(v)) {
+                      try {
+                        await addPerson(v);
+                        if (el) el.value = "";
+                      } catch (error) {
+                        console.error('Error adding person:', error);
+                      }
                     }
                   }}
                 >Add</Button>
@@ -501,19 +684,31 @@ export default function TeamInbox() {
             <>
               <DialogHeader>
                 <DialogTitle>Edit task</DialogTitle>
-                <DialogDescription>Fast, minimal, like a Notion page without the noise.</DialogDescription>
+                <DialogDescription>Fast, minimal, like a Notion page without the noise. Press ⌘+Enter to close.</DialogDescription>
               </DialogHeader>
 
               <div className="grid gap-4">
                 <Input
                   value={activeTask.title}
                   onChange={(e) => updateTask(activeTask.id, { title: e.target.value })}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      setActiveId(null);
+                    }
+                  }}
                 />
                 <Textarea
                   placeholder="Notes"
                   value={activeTask.notes}
                   onChange={(e) => updateTask(activeTask.id, { notes: e.target.value })}
                   className="min-h-32"
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      setActiveId(null);
+                    }
+                  }}
                 />
 
                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">

@@ -10,15 +10,16 @@ export interface UserPreferences {
   assigneeFilter: string;
 }
 
-export const loadFromStorage = () => {
+export const loadFromStorage = (userKey?: string) => {
   try {
     const tasks = localStorage.getItem(LS_TASKS_KEY);
     const people = localStorage.getItem(LS_PEOPLE_KEY);
-    const prefs = localStorage.getItem(LS_PREFS_KEY);
+    const prefsKey = userKey ? `${LS_PREFS_KEY}_${userKey}` : LS_PREFS_KEY;
+    const prefs = localStorage.getItem(prefsKey);
 
     const parsedTasks: Task[] = tasks ? JSON.parse(tasks) : [];
     const parsedPeople: string[] = people ? JSON.parse(people) : ["Alice", "Bob", "Charlie"];
-    const parsedPrefs: Partial<UserPreferences> = prefs ? JSON.parse(prefs) : {};
+    const parsedPrefs: Partial<UserPreferences> = prefs ? JSON.parse(prefs) : { showDone: true }; // Default to show completed
 
     return { parsedTasks, parsedPeople, parsedPrefs };
   } catch (e) {
@@ -26,7 +27,7 @@ export const loadFromStorage = () => {
     return {
       parsedTasks: [],
       parsedPeople: ["Alice", "Bob", "Charlie"],
-      parsedPrefs: {}
+      parsedPrefs: { showDone: true } // Default to show completed
     };
   }
 };
@@ -39,6 +40,7 @@ export const savePeopleToStorage = (people: string[]) => {
   localStorage.setItem(LS_PEOPLE_KEY, JSON.stringify(people));
 };
 
-export const savePrefsToStorage = (prefs: UserPreferences) => {
-  localStorage.setItem(LS_PREFS_KEY, JSON.stringify(prefs));
+export const savePrefsToStorage = (prefs: UserPreferences, userKey?: string) => {
+  const prefsKey = userKey ? `${LS_PREFS_KEY}_${userKey}` : LS_PREFS_KEY;
+  localStorage.setItem(prefsKey, JSON.stringify(prefs));
 };
