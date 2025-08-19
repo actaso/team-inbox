@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
@@ -18,6 +18,16 @@ type Props = {
 };
 
 export default function RichTextNotes({ value, onChange, placeholder, className, onCmdEnter }: Props) {
+  const lastHtmlRef = useRef<string>(value || "");
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const emitChangeDebounced = useCallback((html: string) => {
+    if (!onChange) return;
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      lastHtmlRef.current = html;
+      onChange(html);
+    }, 250);
+  }, [onChange]);
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -60,9 +70,22 @@ export default function RichTextNotes({ value, onChange, placeholder, className,
       },
     },
     onUpdate: ({ editor }) => {
-      onChange(editor.getHTML());
+      const html = editor.getHTML();
+      if (html === lastHtmlRef.current) return;
+      emitChangeDebounced(html);
     },
   });
+  // Sync external value into editor only if it differs from current content
+  useEffect(() => {
+    if (!editor) return;
+    const current = editor.getHTML();
+    const next = value || "";
+    if (current !== next) {
+      editor.commands.setContent(next, false);
+      lastHtmlRef.current = next;
+    }
+  }, [editor, value]);
+
 
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -112,6 +135,14 @@ export default function RichTextNotes({ value, onChange, placeholder, className,
             e.stopPropagation();
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'enter') {
               e.preventDefault();
+              // Ensure latest content is sent before committing
+              if (editor) {
+                const html = editor.getHTML();
+                if (html !== lastHtmlRef.current) {
+                  lastHtmlRef.current = html;
+                  onChange?.(html);
+                }
+              }
               onCmdEnter?.();
             }
           }}

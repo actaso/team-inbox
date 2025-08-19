@@ -294,7 +294,10 @@ export default function TeamInbox() {
         if (!activeTask && (k === 'arrowdown' || k === 'arrowup')) {
           e.preventDefault();
           if (!ordered.length) return;
-          const currentIndex = selectedId ? ordered.findIndex(t => t.id === selectedId) : 0;
+          const currentIndex = (() => {
+            const idx = selectedId ? ordered.findIndex(t => t.id === selectedId) : -1;
+            return idx >= 0 ? idx : 0;
+          })();
           const nextIndex = k === 'arrowdown'
             ? Math.min(currentIndex + 1, ordered.length - 1)
             : Math.max(currentIndex - 1, 0);
@@ -364,7 +367,11 @@ export default function TeamInbox() {
         e.preventDefault();
         setNewOpen(false);
         setFiltersOpen(false);
-        setActiveId(null);
+        if (activeTask) {
+          void saveAndClose();
+        } else {
+          setActiveId(null);
+        }
       }
       
       // / (slash): Focus search
@@ -786,7 +793,11 @@ export default function TeamInbox() {
       </Dialog>
 
       {/* Task detail dialog */}
-      <Dialog open={!!activeTask} onOpenChange={(open) => setActiveId(open ? activeId : null)}>
+      <Dialog open={!!activeTask} onOpenChange={(open) => {
+        if (!open) {
+          void saveAndClose();
+        }
+      }}>
         <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
           {activeTask ? (
             <>
@@ -797,28 +808,28 @@ export default function TeamInbox() {
 
               <div className="grid gap-4">
                 <Input
-                  value={activeTask.title}
-                  onChange={(e) => updateTask(activeTask.id, { title: e.target.value })}
+                  value={editDraft?.title || ""}
+                  onChange={(e) => setEditDraft(d => d ? { ...d, title: e.target.value } : d)}
                   onKeyDown={(e) => {
                     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                       e.preventDefault();
-                      setActiveId(null);
+                      void saveAndClose();
                     }
                   }}
                 />
                 <RichTextNotes
-                  value={activeTask.notes || ""}
-                  onChange={(html) => updateTask(activeTask.id, { notes: html })}
+                  value={editDraft?.notes || ""}
+                  onChange={(html) => setEditDraft(d => d ? { ...d, notes: html } : d)}
                   placeholder="Notes (rich text; paste/drag images)"
-                  onCmdEnter={() => setActiveId(null)}
+                  onCmdEnter={() => void saveAndClose()}
                 />
 
                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground">Impact</label>
                     <Select
-                      value={String(activeTask.impact)}
-                      onValueChange={(v) => updateTask(activeTask.id, { impact: Number(v) as Score })}
+                      value={String(editDraft?.impact ?? 3)}
+                      onValueChange={(v) => setEditDraft(d => d ? { ...d, impact: Number(v) as Score } : d)}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -833,8 +844,8 @@ export default function TeamInbox() {
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground">Confidence</label>
                     <Select
-                      value={String(activeTask.confidence)}
-                      onValueChange={(v) => updateTask(activeTask.id, { confidence: Number(v) as Score })}
+                      value={String(editDraft?.confidence ?? 3)}
+                      onValueChange={(v) => setEditDraft(d => d ? { ...d, confidence: Number(v) as Score } : d)}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -849,8 +860,8 @@ export default function TeamInbox() {
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground">Ease</label>
                     <Select
-                      value={String(activeTask.ease)}
-                      onValueChange={(v) => updateTask(activeTask.id, { ease: Number(v) as Score })}
+                      value={String(editDraft?.ease ?? 3)}
+                      onValueChange={(v) => setEditDraft(d => d ? { ...d, ease: Number(v) as Score } : d)}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -865,8 +876,8 @@ export default function TeamInbox() {
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground">Assignee</label>
                     <Select
-                      value={activeTask.assignee ?? "_none"}
-                      onValueChange={(v) => updateTask(activeTask.id, { assignee: v === "_none" ? undefined : v })}
+                      value={editDraft?.assignee ?? "_none"}
+                      onValueChange={(v) => setEditDraft(d => d ? { ...d, assignee: v === "_none" ? undefined : v } : d)}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -882,8 +893,8 @@ export default function TeamInbox() {
                   <div className="flex items-end gap-2">
                     <Checkbox
                       id="detail-done"
-                      checked={activeTask.done}
-                      onCheckedChange={(v) => updateTask(activeTask.id, { done: Boolean(v) })}
+                      checked={!!editDraft?.done}
+                      onCheckedChange={(v) => setEditDraft(d => d ? { ...d, done: Boolean(v) } : d)}
                     />
                     <label htmlFor="detail-done" className="text-sm">Done</label>
                   </div>
@@ -892,7 +903,7 @@ export default function TeamInbox() {
 
               <DialogFooter className="justify-between">
                 <Button variant="destructive" onClick={() => { deleteTask(activeTask.id); setActiveId(null); }}>Delete</Button>
-                <Button onClick={() => setActiveId(null)}>Close</Button>
+                <Button onClick={() => void saveAndClose()}>Save & Close</Button>
               </DialogFooter>
             </>
           ) : null}
