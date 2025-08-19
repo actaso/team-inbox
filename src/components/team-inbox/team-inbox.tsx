@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import RichTextNotes from "@/components/RichTextNotes";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -416,7 +415,7 @@ export default function TeamInbox() {
     
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeTask, handleExport, handleImport, clearCompleted]);
+  }, [activeTask, handleExport, handleImport, clearCompleted, ordered, selectedId, saveAndClose, updateTask]);
 
   return (
     <div className="mx-auto max-w-5xl p-6 space-y-6">

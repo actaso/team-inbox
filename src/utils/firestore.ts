@@ -214,7 +214,11 @@ export const subscribeToProjects = (
 ): Unsubscribe => {
   const q = query(collection(db, PROJECTS_COLLECTION), orderBy('createdAt', 'asc'));
   return onSnapshot(q, (snapshot) => {
-    const projects = snapshot.docs.map(d => ({ id: d.id, name: (d.data() as any).name as string }));
+    interface FirestoreProjectDoc { name: string; createdAt: Timestamp }
+    const projects = snapshot.docs.map(d => {
+      const data = d.data() as FirestoreProjectDoc;
+      return { id: d.id, name: data.name };
+    });
     callback(projects);
   });
 };
