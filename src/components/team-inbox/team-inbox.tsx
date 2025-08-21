@@ -64,6 +64,13 @@ import {
 import { initializeCurrentUser } from "@/utils/team-initialization";
 import ProjectSelector, { useProjectId } from "./ProjectSelector";
 
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return text.slice(0, maxLength - 1) + "…";
+}
+
 export default function TeamInbox() {
   const { user } = useUser();
   const projectId = useProjectId();
@@ -595,7 +602,7 @@ export default function TeamInbox() {
                       className="text-left w-full"
                     >
                       <div className="flex items-center gap-2">
-                        <div className="font-medium leading-5 hover:underline cursor-pointer flex-1">{t.title}</div>
+                        <div className="font-medium leading-5 hover:underline cursor-pointer flex-1" title={t.title}>{truncateText(t.title, 80)}</div>
                         {t.assignee ? (
                           <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border-blue-200">
                             {t.assignee}
